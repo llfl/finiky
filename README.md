@@ -24,13 +24,17 @@ cargo build --release --target x86_64-unknown-linux-musl
 
 ## Usage
 
-### Print Default Configuration
+### Generate Default Configuration
 
 ```bash
-finiky print-config
+# Generate config.toml (default filename)
+finiky gen-config
+
+# Generate with custom filename
+finiky gen-config my-config.toml
 ```
 
-This will output the embedded default configuration file that you can save and customize.
+This will generate the default configuration file that you can customize.
 
 ### Start Server
 

@@ -60,8 +60,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Print the default embedded configuration file
-    PrintConfig,
+    /// Generate the default configuration file
+    GenConfig {
+        /// Output file path (default: config.toml)
+        #[arg(default_value = "config.toml")]
+        file: PathBuf,
+    },
     /// Start the PXE server
     Start,
 }
@@ -75,8 +79,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::PrintConfig) => {
-            println!("{}", DEFAULT_CONFIG);
+        Some(Commands::GenConfig { file }) => {
+            std::fs::write(&file, DEFAULT_CONFIG)?;
+            println!("Configuration written to: {}", file.display());
             return Ok(());
         }
         Some(Commands::Start) | None => {

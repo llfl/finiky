@@ -1,0 +1,22 @@
+[dhcp]
+port = 67
+interface = null
+ip_pool_start = "192.168.1.100"
+ip_pool_end = "192.168.1.200"
+subnet_mask = "255.255.255.0"
+gateway = "192.168.1.1"
+dns_servers = ["8.8.8.8", "8.8.4.4"]
+next_server = "192.168.1.1"
+
+[dhcp.protocols]
+efi = true
+legacy = true
+dhcp_boot = true
+
+[tftp]
+port = 69
+root = "./tftp"
+
+[http]
+port = 8080
+root = "./http"

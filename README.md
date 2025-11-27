@@ -16,10 +16,20 @@ A fast and portable PXE Server written in Rust for rapid OS deployment to bare m
 cargo build --release
 ```
 
-For musl-based static binary:
+To build for musl-based static binary (for Linux deployment):
 
 ```bash
 cargo build --release --target x86_64-unknown-linux-musl
+```
+
+You can also set an alias for convenience:
+
+```bash
+# Add to your shell config (~/.zshrc or ~/.bashrc)
+alias cargo-musl='cargo build --release --target x86_64-unknown-linux-musl'
+
+# Then use it
+cargo-musl
 ```
 
 ## Usage

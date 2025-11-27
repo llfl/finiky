@@ -1,6 +1,6 @@
-use finiky::filesystem;
 use finiky::filesystem::directory::DirectoryFileSystem;
 use finiky::filesystem::tarfs::TarFileSystem;
+use finiky::filesystem::FileSystem;
 use std::fs;
 use tempfile::TempDir;
 
@@ -45,7 +45,9 @@ async fn test_tar_filesystem_read() {
     use flate2::Compression;
     use tar::Builder;
 
-    let file = tempfile::NamedTempFile::new().unwrap();
+    let temp_dir = TempDir::new().unwrap();
+    let tar_path = temp_dir.path().join("test.tar.gz");
+    let file = std::fs::File::create(&tar_path).unwrap();
     let encoder = GzEncoder::new(file, Compression::default());
     let mut tar = Builder::new(encoder);
 
@@ -53,13 +55,11 @@ async fn test_tar_filesystem_read() {
     header.set_path("test.txt").unwrap();
     header.set_size(13);
     header.set_cksum();
-    tar.append(&header, b"Hello, World!").unwrap();
-    tar.finish().unwrap();
+    tar.append(&header, &b"Hello, World!"[..]).unwrap();
+    let encoder = tar.into_inner().unwrap();
+    let _file = encoder.finish().unwrap();
 
-    let path = file.path().to_path_buf();
-    drop(file);
-
-    let fs = TarFileSystem::new(path).unwrap();
+    let fs = TarFileSystem::new(&tar_path).unwrap();
     let content = fs.read_file("test.txt").await.unwrap();
     assert_eq!(content, b"Hello, World!");
 }
@@ -70,27 +70,28 @@ async fn test_tar_filesystem_directory() {
     use flate2::Compression;
     use tar::Builder;
 
-    let file = tempfile::NamedTempFile::new().unwrap();
+    let temp_dir = TempDir::new().unwrap();
+    let tar_path = temp_dir.path().join("test.tar.gz");
+    let file = std::fs::File::create(&tar_path).unwrap();
     let encoder = GzEncoder::new(file, Compression::default());
     let mut tar = Builder::new(encoder);
 
     let mut header = tar::Header::new_gnu();
     header.set_path("dir/").unwrap();
     header.set_entry_type(tar::EntryType::Directory);
+    header.set_size(0);
     header.set_cksum();
-    tar.append(&header, &[]).unwrap();
+    tar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_path("dir/file.txt").unwrap();
     header.set_size(8);
     header.set_cksum();
-    tar.append(&header, b"dir file").unwrap();
-    tar.finish().unwrap();
+    tar.append(&header, &b"dir file"[..]).unwrap();
+    let encoder = tar.into_inner().unwrap();
+    let _file = encoder.finish().unwrap();
 
-    let path = file.path().to_path_buf();
-    drop(file);
-
-    let fs = TarFileSystem::new(path).unwrap();
+    let fs = TarFileSystem::new(&tar_path).unwrap();
     assert!(fs.exists("dir/").await);
     let entries = fs.list_dir("dir").await.unwrap();
     assert!(entries.contains(&"file.txt".to_string()));

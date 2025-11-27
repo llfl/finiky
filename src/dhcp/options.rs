@@ -72,7 +72,7 @@ fn parse_ip(ip_str: &str) -> Result<Ipv4Addr, std::net::AddrParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, DhcpConfig};
+    use crate::config::Config;
 
     #[test]
     fn test_build_options() {

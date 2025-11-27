@@ -11,7 +11,7 @@ fn test_tftp_packet_parsing() {
     data.push(0);
 
     let packet = TftpPacket::parse(&data).unwrap();
-    assert!(matches!(packet.opcode, TftpOpcode::ReadRequest));
+    assert!(matches!(packet.opcode(), TftpOpcode::ReadRequest));
     assert_eq!(packet.extract_filename(), Some("test.txt".to_string()));
 }
 

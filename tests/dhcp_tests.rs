@@ -4,7 +4,7 @@ use finiky::dhcp::server::{DhcpMessage, DhcpServer};
 
 #[test]
 fn test_dhcp_message_serialization() {
-    let mut msg = DhcpMessage {
+    let msg = DhcpMessage {
         op: 1,
         htype: 1,
         hlen: 6,

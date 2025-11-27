@@ -80,6 +80,11 @@ impl TftpPacket {
             None
         }
     }
+
+    #[allow(dead_code)]
+    pub fn opcode(&self) -> TftpOpcode {
+        self.opcode
+    }
 }
 
 pub struct TftpServer {
@@ -242,9 +247,6 @@ impl TftpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filesystem::directory::DirectoryFileSystem;
-    use std::fs;
-    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_tftp_packet_parsing() {
@@ -256,7 +258,7 @@ mod tests {
         data.push(0);
 
         let packet = TftpPacket::parse(&data).unwrap();
-        assert!(matches!(packet.opcode, TftpOpcode::ReadRequest));
+        assert!(matches!(packet.opcode(), TftpOpcode::ReadRequest));
         assert_eq!(packet.extract_filename(), Some("test.txt".to_string()));
     }
 

@@ -151,12 +151,13 @@ mod tests {
     use super::*;
     use flate2::write::GzEncoder;
     use flate2::Compression;
-    use std::io::Write;
+    use std::fs::File;
     use tar::Builder;
-    use tempfile::NamedTempFile;
+    use tempfile::TempDir;
 
-    fn create_test_tar() -> NamedTempFile {
-        let file = NamedTempFile::new().unwrap();
+    fn create_test_tar(temp_dir: &TempDir) -> std::path::PathBuf {
+        let tar_path = temp_dir.path().join("test.tar.gz");
+        let file = File::create(&tar_path).unwrap();
         let encoder = GzEncoder::new(file, Compression::default());
         let mut tar = Builder::new(encoder);
 
@@ -164,32 +165,31 @@ mod tests {
         header.set_path("test.txt").unwrap();
         header.set_size(12);
         header.set_cksum();
-        tar.append(&header, b"test content").unwrap();
+        tar.append(&header, &b"test content"[..]).unwrap();
 
         let mut header = tar::Header::new_gnu();
         header.set_path("dir/").unwrap();
         header.set_entry_type(tar::EntryType::Directory);
+        header.set_size(0);
         header.set_cksum();
-        tar.append(&header, &[]).unwrap();
+        tar.append(&header, &[][..]).unwrap();
 
         let mut header = tar::Header::new_gnu();
         header.set_path("dir/file.txt").unwrap();
         header.set_size(8);
         header.set_cksum();
-        tar.append(&header, b"dir file").unwrap();
+        tar.append(&header, &b"dir file"[..]).unwrap();
 
-        tar.finish().unwrap();
-
-        // Reopen the file for reading
-        let path = file.path().to_path_buf();
-        drop(file);
-        NamedTempFile::from_path(path).unwrap()
+        let encoder = tar.into_inner().unwrap();
+        let _file = encoder.finish().unwrap();
+        tar_path
     }
 
     #[tokio::test]
     async fn test_tar_filesystem() {
-        let tar_file = create_test_tar();
-        let fs = TarFileSystem::new(tar_file.path()).unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let tar_file = create_test_tar(&temp_dir);
+        let fs = TarFileSystem::new(&tar_file).unwrap();
 
         assert!(fs.exists("test.txt").await);
         assert!(!fs.exists("nonexistent.txt").await);
@@ -200,8 +200,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_tar_directory_listing() {
-        let tar_file = create_test_tar();
-        let fs = TarFileSystem::new(tar_file.path()).unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let tar_file = create_test_tar(&temp_dir);
+        let fs = TarFileSystem::new(&tar_file).unwrap();
 
         let entries = fs.list_dir("").await.unwrap();
         assert!(entries.contains(&"test.txt".to_string()));

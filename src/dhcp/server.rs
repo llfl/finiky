@@ -307,7 +307,6 @@ impl DhcpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
 
     #[test]
     fn test_dhcp_message_parsing() {

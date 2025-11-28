@@ -4,12 +4,11 @@ use std::net::Ipv4Addr;
 pub struct DhcpOptions;
 
 impl DhcpOptions {
-    pub fn build_options(config: &DhcpConfig, _client_ip: Ipv4Addr) -> Vec<u8> {
+    pub fn build_options(config: &DhcpConfig, _client_ip: Ipv4Addr, msg_type: u8) -> Vec<u8> {
         let mut options = vec![
-            // Message type: DHCP Offer
+            // Message type: DHCP Offer (2) or ACK (5)
             53, // DHCP Message Type
-            1, 2, // Offer
-            1, // Subnet Mask
+            1, msg_type, 1, // Subnet Mask
             4,
         ];
 
@@ -78,7 +77,7 @@ mod tests {
     fn test_build_options() {
         let config = Config::default();
         let client_ip = "192.168.1.100".parse().unwrap();
-        let options = DhcpOptions::build_options(&config.dhcp, client_ip);
+        let options = DhcpOptions::build_options(&config.dhcp, client_ip, 2); // Offer
 
         assert!(!options.is_empty());
         assert_eq!(options[0], 53); // Message Type

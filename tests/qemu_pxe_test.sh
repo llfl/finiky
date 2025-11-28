@@ -217,7 +217,6 @@ run_uefi_test() {
         -device virtio-net-pci,netdev=net0 \
         -bios "$efi_firmware" \
         -boot n \
-        -serial stdio \
         -serial file:"$serial_file" \
         -nographic \
         -no-reboot \
@@ -272,14 +271,14 @@ run_legacy_test() {
     local serial_file="$SCRIPT_DIR/qemu_legacy_serial.log"
     
     # Start QEMU (using Legacy BIOS)
+    # Use e1000 instead of rtl8139 for better PXE compatibility
     qemu-system-x86_64 \
         -machine pc,accel=kvm:tcg \
         -cpu qemu64 \
         -m "$QEMU_MEMORY" \
         -netdev tap,id=net0,ifname="$TAP_DEVICE",script=no,downscript=no \
-        -device rtl8139,netdev=net0 \
+        -device e1000,netdev=net0,mac=52:54:00:12:34:56 \
         -boot n \
-        -serial stdio \
         -serial file:"$serial_file" \
         -nographic \
         -no-reboot \

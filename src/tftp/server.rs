@@ -1,7 +1,9 @@
 use crate::filesystem::FileSystem;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
 use tracing as log;
 
 const BLOCK_SIZE: usize = 512;
@@ -107,19 +109,71 @@ impl TftpServer {
         let mut buf = vec![0u8; MAX_PACKET_SIZE];
         let filesystem = Arc::clone(&self.filesystem);
 
+        // Track active transfers: peer -> sender channel
+        let active_transfers: Arc<tokio::sync::Mutex<HashMap<SocketAddr, mpsc::Sender<Vec<u8>>>>> =
+            Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+
         loop {
             match socket.recv_from(&mut buf).await {
                 Ok((size, peer)) => {
                     let data = &buf[..size];
                     if let Ok(packet) = TftpPacket::parse(data) {
-                        let socket_clone = Arc::clone(&socket);
-                        let filesystem_clone = Arc::clone(&filesystem);
-                        tokio::spawn(Self::handle_request(
-                            socket_clone,
-                            peer,
-                            packet,
-                            filesystem_clone,
-                        ));
+                        match packet.opcode {
+                            TftpOpcode::ReadRequest => {
+                                let socket_clone = Arc::clone(&socket);
+                                let filesystem_clone = Arc::clone(&filesystem);
+                                let active_transfers_clone = Arc::clone(&active_transfers);
+
+                                // Create a channel for this transfer
+                                let (tx, rx) = mpsc::channel::<Vec<u8>>(10);
+                                active_transfers_clone.lock().await.insert(peer, tx);
+
+                                if let Some(filename) = packet.extract_filename() {
+                                    log::info!("TFTP read request for: {} from {}", filename, peer);
+                                    tokio::spawn(Self::handle_read_with_channel(
+                                        socket_clone,
+                                        peer,
+                                        filename,
+                                        filesystem_clone,
+                                        active_transfers_clone,
+                                        rx,
+                                    ));
+                                }
+                            }
+                            TftpOpcode::Ack => {
+                                // Route ACK to the appropriate transfer handler
+                                let active_transfers_clone = Arc::clone(&active_transfers);
+                                let tx_opt = {
+                                    let transfers = active_transfers_clone.lock().await;
+                                    transfers.get(&peer).cloned()
+                                };
+
+                                if let Some(tx) = tx_opt {
+                                    if tx.send(data.to_vec()).await.is_err() {
+                                        log::warn!(
+                                            "Failed to send ACK to transfer handler for {}",
+                                            peer
+                                        );
+                                        active_transfers_clone.lock().await.remove(&peer);
+                                    }
+                                } else {
+                                    log::warn!("Received ACK from {} but no active transfer", peer);
+                                }
+                            }
+                            TftpOpcode::WriteRequest => {
+                                let error = TftpPacket::build_error(2, "Write not supported");
+                                let _ = socket.send_to(&error, peer).await;
+                            }
+                            _ => {
+                                log::warn!(
+                                    "Unexpected TFTP packet type {:?} from {}",
+                                    packet.opcode,
+                                    peer
+                                );
+                            }
+                        }
+                    } else {
+                        log::warn!("Failed to parse TFTP packet from {}", peer);
                     }
                 }
                 Err(e) => {
@@ -129,35 +183,13 @@ impl TftpServer {
         }
     }
 
-    async fn handle_request(
-        socket: Arc<UdpSocket>,
-        peer: SocketAddr,
-        packet: TftpPacket,
-        filesystem: Arc<dyn FileSystem>,
-    ) {
-        match packet.opcode {
-            TftpOpcode::ReadRequest => {
-                if let Some(filename) = packet.extract_filename() {
-                    log::debug!("TFTP read request for: {}", filename);
-                    Self::handle_read(socket, peer, filename, filesystem).await;
-                }
-            }
-            TftpOpcode::WriteRequest => {
-                // TFTP write not supported for PXE boot
-                let error = TftpPacket::build_error(2, "Write not supported");
-                let _ = socket.send_to(&error, peer).await;
-            }
-            _ => {
-                log::warn!("Unexpected TFTP packet type from {}", peer);
-            }
-        }
-    }
-
-    async fn handle_read(
+    async fn handle_read_with_channel(
         socket: Arc<UdpSocket>,
         peer: SocketAddr,
         filename: String,
         filesystem: Arc<dyn FileSystem>,
+        active_transfers: Arc<tokio::sync::Mutex<HashMap<SocketAddr, mpsc::Sender<Vec<u8>>>>>,
+        mut ack_rx: mpsc::Receiver<Vec<u8>>,
     ) {
         // Normalize filename (remove leading slash if present)
         let filename = filename.trim_start_matches('/');
@@ -196,25 +228,25 @@ impl TftpServer {
                 return;
             }
 
-            // Wait for ACK
-            let mut ack_buf = vec![0u8; 4];
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                socket.recv_from(&mut ack_buf),
-            )
-            .await
-            {
-                Ok(Ok((size, ack_peer))) if ack_peer == peer => {
-                    if size >= 4 {
-                        let ack_opcode = u16::from_be_bytes([ack_buf[0], ack_buf[1]]);
-                        let ack_block = u16::from_be_bytes([ack_buf[2], ack_buf[3]]);
+            // Wait for ACK via channel
+            match tokio::time::timeout(std::time::Duration::from_secs(5), ack_rx.recv()).await {
+                Ok(Some(ack_data)) => {
+                    if ack_data.len() >= 4 {
+                        let ack_opcode = u16::from_be_bytes([ack_data[0], ack_data[1]]);
+                        let ack_block = u16::from_be_bytes([ack_data[2], ack_data[3]]);
 
                         if ack_opcode == TftpOpcode::Ack as u16 && ack_block == block_num {
                             offset += chunk_size;
+                            log::debug!("Received ACK for block {} of {}", block_num, filename);
 
                             // If this was the last block (less than BLOCK_SIZE), we're done
                             if chunk_size < BLOCK_SIZE {
-                                log::debug!("TFTP transfer complete: {}", filename);
+                                log::info!(
+                                    "TFTP transfer complete: {} ({} bytes)",
+                                    filename,
+                                    file_data.len()
+                                );
+                                active_transfers.lock().await.remove(&peer);
                                 return;
                             }
 
@@ -223,20 +255,29 @@ impl TftpServer {
                                 block_num = 1; // Wrap around (though unlikely)
                             }
                         } else {
-                            log::warn!("Invalid ACK from {}", peer);
+                            log::warn!(
+                                "Invalid ACK from {}: expected block {}, got {}",
+                                peer,
+                                block_num,
+                                ack_block
+                            );
+                            active_transfers.lock().await.remove(&peer);
                             return;
                         }
+                    } else {
+                        log::warn!("ACK packet too short from {}", peer);
+                        active_transfers.lock().await.remove(&peer);
+                        return;
                     }
                 }
-                Ok(Ok((_, ack_peer))) => {
-                    log::warn!("ACK from wrong peer: {}", ack_peer);
-                }
-                Ok(Err(e)) => {
-                    log::error!("Error receiving ACK: {}", e);
+                Ok(None) => {
+                    log::warn!("ACK channel closed for {}", peer);
+                    active_transfers.lock().await.remove(&peer);
                     return;
                 }
                 Err(_) => {
-                    log::warn!("Timeout waiting for ACK");
+                    log::warn!("Timeout waiting for ACK from {}", peer);
+                    active_transfers.lock().await.remove(&peer);
                     return;
                 }
             }

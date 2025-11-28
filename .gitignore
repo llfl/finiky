@@ -1,1 +1,4 @@
 /target
+*.log
+tests/fixtures/
+test_*.toml

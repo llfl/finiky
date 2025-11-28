@@ -7,6 +7,11 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tracing as log;
 
+#[cfg(target_os = "linux")]
+use libc::{c_int, setsockopt, SOL_SOCKET};
+#[cfg(target_os = "linux")]
+const SO_BINDTODEVICE: c_int = 25;
+
 const DHCP_SERVER_PORT: u16 = 67;
 
 #[derive(Debug, Clone)]
@@ -209,6 +214,33 @@ impl DhcpServer {
         socket.set_broadcast(true)?;
         socket.set_reuse_address(true)?;
 
+        // Bind to specific network interface if configured
+        #[cfg(target_os = "linux")]
+        if let Some(ref interface) = self.config.interface {
+            use std::os::unix::io::AsRawFd;
+            let interface_bytes = interface.as_bytes();
+            let interface_cstr = std::ffi::CString::new(interface_bytes)?;
+            unsafe {
+                let fd = socket.as_raw_fd();
+                let result = setsockopt(
+                    fd,
+                    SOL_SOCKET,
+                    SO_BINDTODEVICE,
+                    interface_cstr.as_ptr() as *const _,
+                    interface_cstr.as_bytes().len() as u32,
+                );
+                if result != 0 {
+                    return Err(format!(
+                        "Failed to bind to interface {}: {}",
+                        interface,
+                        std::io::Error::last_os_error()
+                    )
+                    .into());
+                }
+            }
+            log::info!("DHCP server bound to interface: {}", interface);
+        }
+
         // Bind to DHCP server port
         let addr = SocketAddr::from(([0, 0, 0, 0], DHCP_SERVER_PORT));
         socket.bind(&addr.into())?;
@@ -226,15 +258,26 @@ impl DhcpServer {
 
         loop {
             match udp_socket.recv_from(&mut buf).await {
-                Ok((size, peer)) => {
+                Ok((size, _peer)) => {
                     let data = &buf[..size];
                     if let Ok(request) = DhcpMessage::from_bytes(data) {
-                        if let Some(response) =
+                        if let Some((response, should_broadcast)) =
                             self.handle_request(&request, ip_pool, &config).await
                         {
                             let response_bytes = response.to_bytes();
-                            if let Err(e) = udp_socket.send_to(&response_bytes, peer).await {
+                            // Always send DHCP responses to broadcast address (255.255.255.255:68)
+                            // This is required because clients may not have an IP address yet
+                            let dest_addr = SocketAddr::from(([255, 255, 255, 255], 68));
+                            if let Err(e) = udp_socket.send_to(&response_bytes, dest_addr).await {
                                 log::error!("Failed to send DHCP response: {}", e);
+                            } else {
+                                let msg_type_name = if should_broadcast { "Offer" } else { "ACK" };
+                                log::info!(
+                                    "Sent DHCP {} to broadcast address {} ({} bytes)",
+                                    msg_type_name,
+                                    dest_addr,
+                                    response_bytes.len()
+                                );
                             }
                         }
                     }
@@ -251,18 +294,36 @@ impl DhcpServer {
         request: &DhcpMessage,
         ip_pool: &IpPool,
         config: &Arc<DhcpConfig>,
-    ) -> Option<DhcpMessage> {
+    ) -> Option<(DhcpMessage, bool)> {
         let msg_type = request.get_message_type()?;
 
-        // Handle both Discover (1) and Request (3) the same way
+        // Handle Discover (1) and Request (3)
         if msg_type != 1 && msg_type != 3 {
             return None;
         }
 
         if msg_type == 1 {
-            log::debug!("Received DHCP Discover from {:?}", request.chaddr);
+            let mac_str = format!(
+                "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                request.chaddr[0],
+                request.chaddr[1],
+                request.chaddr[2],
+                request.chaddr[3],
+                request.chaddr[4],
+                request.chaddr[5]
+            );
+            log::info!("Received DHCP Discover from MAC: {}", mac_str);
         } else {
-            log::debug!("Received DHCP Request from {:?}", request.chaddr);
+            let mac_str = format!(
+                "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                request.chaddr[0],
+                request.chaddr[1],
+                request.chaddr[2],
+                request.chaddr[3],
+                request.chaddr[4],
+                request.chaddr[5]
+            );
+            log::info!("Received DHCP Request from MAC: {}", mac_str);
         }
 
         let mac = {
@@ -276,6 +337,16 @@ impl DhcpServer {
 
         let protocol = ProtocolHandler::select_protocol(&config.protocols, client_arch)?;
         let filename = ProtocolHandler::get_boot_filename(protocol);
+
+        log::info!(
+            "Selected protocol: {:?}, boot filename: {}",
+            protocol,
+            filename
+        );
+        log::info!("Allocated IP: {} for client", client_ip);
+
+        // Determine response message type: Discover -> Offer (2), Request -> ACK (5)
+        let response_msg_type = if msg_type == 1 { 2 } else { 5 };
 
         let mut response = DhcpMessage {
             op: 2, // BOOTREPLY
@@ -293,14 +364,17 @@ impl DhcpServer {
             options: Vec::new(),
         };
 
-        let mut options = DhcpOptions::build_options(config, client_ip);
+        let mut options = DhcpOptions::build_options(config, client_ip, response_msg_type);
         let filename_options = DhcpOptions::build_filename_option(filename);
         options.pop(); // Remove end marker
         options.extend_from_slice(&filename_options);
 
         response.options = options;
 
-        Some(response)
+        // Broadcast response for Discover, and for Request if client doesn't have IP
+        let should_broadcast = msg_type == 1 || request.ciaddr == Ipv4Addr::UNSPECIFIED;
+
+        Some((response, should_broadcast))
     }
 }
 

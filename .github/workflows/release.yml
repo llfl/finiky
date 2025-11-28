@@ -1,0 +1,63 @@
+name: Release
+
+on: { release: { types: [published] } }
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        selection: 
+          - target: x86_64-unknown-linux-musl
+            img: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            img: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            img: macos-latest
+    runs-on: ${{ matrix.selection.img }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@master
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.selection.target }}
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run cargo build and pack
+        run: |
+          cargo build --release --target ${{ matrix.selection.target }}
+          cp target/${{ matrix.selection.target }}/release/finiky .
+          tar -czf finiky-${{ matrix.selection.target }}.tar.gz finiky
+        continue-on-error: false
+
+      - name: Upload to release
+        run: |
+          filename="finiky-${{ matrix.selection.target }}.tar.gz"
+          curl \
+            -f \
+            -sSL \
+            -X POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: application/tar+gzip" \
+            --upload-file "$filename" \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/${{ github.event.release.id }}/assets?name=$filename"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

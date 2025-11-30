@@ -336,7 +336,7 @@ impl DhcpServer {
         let client_arch = request.get_client_arch();
 
         let protocol = ProtocolHandler::select_protocol(&config.protocols, client_arch)?;
-        let filename = ProtocolHandler::get_boot_filename(protocol);
+        let filename = ProtocolHandler::get_boot_filename(protocol, &config.protocols);
 
         log::info!(
             "Selected protocol: {:?}, boot filename: {}",
@@ -365,7 +365,7 @@ impl DhcpServer {
         };
 
         let mut options = DhcpOptions::build_options(config, client_ip, response_msg_type);
-        let filename_options = DhcpOptions::build_filename_option(filename);
+        let filename_options = DhcpOptions::build_filename_option(&filename);
         options.pop(); // Remove end marker
         options.extend_from_slice(&filename_options);
 

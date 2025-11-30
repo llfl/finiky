@@ -1,6 +1,6 @@
 [dhcp]
 port = 67
-interface = null
+interface = ""
 ip_pool_start = "192.168.1.100"
 ip_pool_end = "192.168.1.200"
 subnet_mask = "255.255.255.0"
@@ -12,6 +12,10 @@ next_server = "192.168.1.1"
 efi = true
 legacy = true
 dhcp_boot = true
+# Optional: custom boot filenames (if not specified, defaults will be used)
+# boot_filename_efi = "bootx64.efi"
+# boot_filename_legacy = "pxelinux.0"
+# boot_filename_dhcp_boot = "pxelinux.0"
 
 [tftp]
 port = 69

@@ -57,6 +57,9 @@ fn test_protocol_handler() {
         efi: true,
         legacy: true,
         dhcp_boot: true,
+        boot_filename_efi: None,
+        boot_filename_legacy: None,
+        boot_filename_dhcp_boot: None,
     };
 
     // Test EFI architecture
@@ -82,6 +85,9 @@ fn test_protocol_handler() {
         efi: false,
         legacy: true,
         dhcp_boot: false,
+        boot_filename_efi: None,
+        boot_filename_legacy: None,
+        boot_filename_dhcp_boot: None,
     };
     assert_eq!(
         ProtocolHandler::select_protocol(&config_disabled, None),
@@ -91,17 +97,55 @@ fn test_protocol_handler() {
 
 #[test]
 fn test_boot_filename() {
+    use finiky::config::ProtocolConfig;
+
+    let config = ProtocolConfig {
+        efi: true,
+        legacy: true,
+        dhcp_boot: true,
+        boot_filename_efi: None,
+        boot_filename_legacy: None,
+        boot_filename_dhcp_boot: None,
+    };
+
     assert_eq!(
-        ProtocolHandler::get_boot_filename(BootProtocol::Efi),
+        ProtocolHandler::get_boot_filename(BootProtocol::Efi, &config),
         "bootx64.efi"
     );
     assert_eq!(
-        ProtocolHandler::get_boot_filename(BootProtocol::Legacy),
+        ProtocolHandler::get_boot_filename(BootProtocol::Legacy, &config),
         "pxelinux.0"
     );
     assert_eq!(
-        ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot),
+        ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config),
         "pxelinux.0"
+    );
+}
+
+#[test]
+fn test_boot_filename_custom() {
+    use finiky::config::ProtocolConfig;
+
+    let config = ProtocolConfig {
+        efi: true,
+        legacy: true,
+        dhcp_boot: true,
+        boot_filename_efi: Some("custom_efi.efi".to_string()),
+        boot_filename_legacy: Some("custom_legacy.0".to_string()),
+        boot_filename_dhcp_boot: Some("custom_dhcp.0".to_string()),
+    };
+
+    assert_eq!(
+        ProtocolHandler::get_boot_filename(BootProtocol::Efi, &config),
+        "custom_efi.efi"
+    );
+    assert_eq!(
+        ProtocolHandler::get_boot_filename(BootProtocol::Legacy, &config),
+        "custom_legacy.0"
+    );
+    assert_eq!(
+        ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config),
+        "custom_dhcp.0"
     );
 }
 

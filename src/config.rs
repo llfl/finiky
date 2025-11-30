@@ -27,6 +27,12 @@ pub struct ProtocolConfig {
     pub efi: bool,
     pub legacy: bool,
     pub dhcp_boot: bool,
+    #[serde(default)]
+    pub boot_filename_efi: Option<String>,
+    #[serde(default)]
+    pub boot_filename_legacy: Option<String>,
+    #[serde(default)]
+    pub boot_filename_dhcp_boot: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +57,9 @@ impl Default for Config {
                     efi: true,
                     legacy: true,
                     dhcp_boot: true,
+                    boot_filename_efi: None,
+                    boot_filename_legacy: None,
+                    boot_filename_dhcp_boot: None,
                 },
                 ip_pool_start: "192.168.1.100".to_string(),
                 ip_pool_end: "192.168.1.200".to_string(),
@@ -97,5 +106,81 @@ mod tests {
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(config.dhcp.port, parsed.dhcp.port);
+    }
+
+    #[test]
+    fn test_config_with_custom_boot_filenames() {
+        let config_str = r#"
+[dhcp]
+port = 67
+interface = ""
+ip_pool_start = "192.168.1.100"
+ip_pool_end = "192.168.1.200"
+subnet_mask = "255.255.255.0"
+gateway = "192.168.1.1"
+dns_servers = ["8.8.8.8"]
+next_server = "192.168.1.1"
+
+[dhcp.protocols]
+efi = true
+legacy = true
+dhcp_boot = true
+boot_filename_efi = "custom_efi.efi"
+boot_filename_legacy = "custom_legacy.0"
+boot_filename_dhcp_boot = "custom_dhcp.0"
+
+[tftp]
+port = 69
+root = "./tftp"
+
+[http]
+port = 8080
+root = "./http"
+"#;
+        let config: Config = toml::from_str(config_str).unwrap();
+        assert_eq!(
+            config.dhcp.protocols.boot_filename_efi,
+            Some("custom_efi.efi".to_string())
+        );
+        assert_eq!(
+            config.dhcp.protocols.boot_filename_legacy,
+            Some("custom_legacy.0".to_string())
+        );
+        assert_eq!(
+            config.dhcp.protocols.boot_filename_dhcp_boot,
+            Some("custom_dhcp.0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_without_custom_boot_filenames() {
+        let config_str = r#"
+[dhcp]
+port = 67
+interface = ""
+ip_pool_start = "192.168.1.100"
+ip_pool_end = "192.168.1.200"
+subnet_mask = "255.255.255.0"
+gateway = "192.168.1.1"
+dns_servers = ["8.8.8.8"]
+next_server = "192.168.1.1"
+
+[dhcp.protocols]
+efi = true
+legacy = true
+dhcp_boot = true
+
+[tftp]
+port = 69
+root = "./tftp"
+
+[http]
+port = 8080
+root = "./http"
+"#;
+        let config: Config = toml::from_str(config_str).unwrap();
+        assert_eq!(config.dhcp.protocols.boot_filename_efi, None);
+        assert_eq!(config.dhcp.protocols.boot_filename_legacy, None);
+        assert_eq!(config.dhcp.protocols.boot_filename_dhcp_boot, None);
     }
 }
